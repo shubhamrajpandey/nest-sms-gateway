@@ -5,6 +5,7 @@ import { AppService } from './app.service.js';
 import { ConfigModule } from '@nestjs/config';
 import * as Joi from 'joi';
 import { DatabaseModule } from './database/database.module.js';
+import { AuthModule } from './modules/auth/auth.module.js';
 export const { ObserveModule, ObserveInstrument } = createObserveModule();
 
 @Module({
@@ -25,6 +26,8 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
     }),
 
     DatabaseModule,
+
+    AuthModule,
   ],
   controllers: [AppController],
   providers: [AppService],
