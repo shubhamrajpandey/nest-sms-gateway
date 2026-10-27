@@ -22,6 +22,6 @@ import { ProviderSeed } from './seeds/provider.seed.js';
     TypeOrmModule.forFeature([SmsProvider]),
   ],
   providers: [ProviderSeed],
-  exports: [TypeOrmModule],
+  exports: [TypeOrmModule,ProviderSeed],
 })
 export class DatabaseModule {}
