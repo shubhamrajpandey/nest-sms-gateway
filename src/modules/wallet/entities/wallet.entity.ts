@@ -8,11 +8,13 @@ import {
   OneToMany,
   JoinColumn,
   Index,
+  Check,
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity.js';
 import { WalletTransaction } from './wallet-transaction.entity.js';
 
 @Entity('wallets')
+@Check('"balance" >= 0')
 export class Wallet {
   @PrimaryGeneratedColumn('uuid')
   id: string;
