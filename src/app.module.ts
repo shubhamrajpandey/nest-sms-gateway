@@ -7,6 +7,8 @@ import * as Joi from 'joi';
 import { DatabaseModule } from './database/database.module.js';
 import { AuthModule } from './modules/auth/auth.module.js';
 import { WalletModule } from './modules/wallet/wallet.module.js';
+import { ProvidersModule } from './modules/providers/providers.module.js';
+import { SmsModule } from './modules/sms/sms.module.js';
 export const { ObserveModule, ObserveInstrument } = createObserveModule();
 
 @Module({
@@ -31,6 +33,10 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
     AuthModule,
 
     WalletModule,
+
+    ProvidersModule,
+
+    SmsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
