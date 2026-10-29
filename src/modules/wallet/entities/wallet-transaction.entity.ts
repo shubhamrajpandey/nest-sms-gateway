@@ -7,7 +7,7 @@ import {
   JoinColumn,
   Index,
 } from 'typeorm';
-import { Wallet } from './wallet.entity.js';
+import type { Wallet } from './wallet.entity.js';
 
 export enum TransactionType {
   DEBIT = 'DEBIT',
@@ -25,7 +25,7 @@ export class WalletTransaction {
   @Column({ type: 'uuid' })
   walletId: string;
 
-  @ManyToOne(() => Wallet, (wallet) => wallet.transactions, { onDelete: 'CASCADE' })
+  @ManyToOne('Wallet', 'transactions', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'walletId' })
   wallet: Wallet;
 

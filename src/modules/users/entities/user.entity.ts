@@ -8,9 +8,8 @@ import {
   OneToMany,
   Index,
 } from 'typeorm';
-import { Wallet } from '../../wallet/entities/wallet.entity.js';
-import { SmsMessage } from '../../sms/entities/sms-message.entity.js';
-
+import type { Wallet } from '../../wallet/entities/wallet.entity.js';
+import type { SmsMessage } from '../../sms/entities/sms-message.entity.js';
 
 @Entity('app_users')
 export class User {
@@ -25,11 +24,10 @@ export class User {
   @Column({ select: false })
   password: string;
 
-  
-  @OneToOne(() => Wallet, (wallet: Wallet) => wallet.user, { cascade: true })
+  @OneToOne('Wallet', 'user', { cascade: true })
   wallet: Wallet;
 
-  @OneToMany(() => SmsMessage, (message: SmsMessage) => message.user)
+  @OneToMany('SmsMessage', 'user')
   messages: SmsMessage[];
 
   @CreateDateColumn()

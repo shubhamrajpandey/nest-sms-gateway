@@ -142,6 +142,30 @@ describe('SmsService (Phase 5 - Failover & Dispatch)', () => {
       expect(mockSmsRepo.save).not.toHaveBeenCalled();
       expect(mockProvidersService.getActiveProviders).not.toHaveBeenCalled();
     });
+
+    it('should support { to: string[], message } format from PDF brief and calculate total cost', async () => {
+      mockProvidersService.sendViaProvider.mockResolvedValue({
+        success: true,
+        latencyMs: 50,
+        response: 'Delivered',
+      });
+
+      const response = await service.sendSms(mockUser.id, {
+        to: ['9841234567', '+9779801122334'],
+        message: 'Bulk announcement message',
+      });
+
+      // 2 recipients * 1 credit = 2.0 credits deducted
+      expect(mockWalletService.deductCredits).toHaveBeenCalledWith(
+        mockUser.id,
+        2.0,
+        undefined,
+        expect.stringContaining('2 recipient(s)'),
+      );
+      expect(response.results).toHaveLength(2);
+      expect(response.results![0].recipient).toBe('9841234567');
+      expect(response.results![1].recipient).toBe('9801122334');
+    });
   });
 
   describe('Failover Cascade & Provider Routing', () => {
@@ -255,6 +279,29 @@ describe('SmsService (Phase 5 - Failover & Dispatch)', () => {
 
       const message = await service.getSmsById(mockUser.id, 'msg-1');
       expect(message.id).toBe('msg-1');
+    });
+
+    it('should retrieve logs filtered by status, number, and date', async () => {
+      mockSmsRepo.findAndCount.mockResolvedValue([[], 0]);
+
+      await service.getSmsLogs(mockUser.id, {
+        status: MessageStatus.SENT,
+        number: '9841234567',
+        date: '2026-10-29',
+        page: 1,
+        limit: 10,
+      });
+
+      expect(mockSmsRepo.findAndCount).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            userId: mockUser.id,
+            status: MessageStatus.SENT,
+            recipient: expect.anything(),
+            createdAt: expect.anything(),
+          }),
+        }),
+      );
     });
 
     it('should throw NotFoundException if message belongs to another user or does not exist', async () => {

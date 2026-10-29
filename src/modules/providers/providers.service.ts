@@ -44,6 +44,16 @@ export class ProvidersService {
   }
 
   /**
+   * Retrieves the current balance for a named provider route.
+   */
+  async getBalance(providerName: string): Promise<number> {
+    const provider = await this.providerRepository.findOne({
+      where: { name: providerName },
+    });
+    return provider ? provider.getBalance() : 0;
+  }
+
+  /**
    * Simulates sending an SMS through a specific provider based on its failure rate and latency.
    * Decrements provider balance on success.
    */

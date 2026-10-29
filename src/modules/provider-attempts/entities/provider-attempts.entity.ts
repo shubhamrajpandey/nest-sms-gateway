@@ -7,8 +7,8 @@ import {
   JoinColumn,
   Index,
 } from 'typeorm';
-import { SmsProvider } from '../../providers/entities/sms-provider.entity.js';
-import { SmsMessage } from '../../sms/entities/sms-message.entity.js';
+import type { SmsProvider } from '../../providers/entities/sms-provider.entity.js';
+import type { SmsMessage } from '../../sms/entities/sms-message.entity.js';
 
 export enum AttemptStatus {
   SUCCESS = 'SUCCESS',
@@ -24,7 +24,7 @@ export class ProviderAttempt {
   @Column({ type: 'uuid' })
   messageId: string;
 
-  @ManyToOne(() => SmsMessage, (msg: SmsMessage) => msg.attempts, { onDelete: 'CASCADE' })
+  @ManyToOne('SmsMessage', 'attempts', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'messageId' })
   message: SmsMessage;
 
@@ -32,7 +32,7 @@ export class ProviderAttempt {
   @Column({ type: 'uuid', nullable: true })
   providerId: string | null;
 
-  @ManyToOne(() => SmsProvider, (p: SmsProvider) => p.attempts, {
+  @ManyToOne('SmsProvider', 'attempts', {
     nullable: true,
     onDelete: 'SET NULL',
   })

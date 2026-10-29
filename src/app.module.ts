@@ -3,12 +3,13 @@ import { createObserveModule } from '@nestjs/observe';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { ConfigModule } from '@nestjs/config';
-import * as Joi from 'joi';
+import Joi from 'joi';
 import { DatabaseModule } from './database/database.module.js';
 import { AuthModule } from './modules/auth/auth.module.js';
 import { WalletModule } from './modules/wallet/wallet.module.js';
 import { ProvidersModule } from './modules/providers/providers.module.js';
 import { SmsModule } from './modules/sms/sms.module.js';
+import { RoutesHealthModule } from './modules/routes-health/routes-health.module.js';
 export const { ObserveModule, ObserveInstrument } = createObserveModule();
 
 @Module({
@@ -37,6 +38,8 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
     ProvidersModule,
 
     SmsModule,
+
+    RoutesHealthModule,
   ],
   controllers: [AppController],
   providers: [AppService],

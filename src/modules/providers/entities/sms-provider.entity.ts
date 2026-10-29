@@ -6,7 +6,7 @@ Column,
   UpdateDateColumn,
   OneToMany,
 } from 'typeorm';
-import { ProviderAttempt } from '../../provider-attempts/entities/provider-attempts.entity.js';
+import type { ProviderAttempt } from '../../provider-attempts/entities/provider-attempts.entity.js';
 
 @Entity('sms_providers')
 export class SmsProvider {
@@ -28,7 +28,7 @@ export class SmsProvider {
   @Column({ type: 'boolean', default: true })
   isActive: boolean;
 
-  @OneToMany(() => ProviderAttempt, (attempt: ProviderAttempt) => attempt.provider)
+  @OneToMany('ProviderAttempt', 'provider')
   attempts: ProviderAttempt[];
 
   @CreateDateColumn()
@@ -36,4 +36,11 @@ export class SmsProvider {
 
   @UpdateDateColumn()
   updatedAt: Date;
+
+  /**
+   * Returns current simulated credit balance of the route.
+   */
+  getBalance(): number {
+    return this.balance;
+  }
 }

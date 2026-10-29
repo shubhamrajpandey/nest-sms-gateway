@@ -1,10 +1,11 @@
 import {
   Injectable,
   NotFoundException,
+  BadRequestException,
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, Like, Between } from 'typeorm';
 import {
   SmsMessage,
   MessageStatus,
@@ -37,6 +38,7 @@ export interface SendSmsResponse {
     latencyMs: number | null;
     response: string | null;
   }[];
+  results?: SendSmsResponse[];
 }
 
 @Injectable()
@@ -54,136 +56,174 @@ export class SmsService {
 
   /**
    * Main SMS Dispatch Pipeline:
-   * 1. Validates and normalizes Nepali recipient mobile number.
-   * 2. Calculates SMS segmentation and credit cost (GSM-7 vs Unicode).
-   * 3. Atomically deducts credits from wallet with row-level locking.
-   * 4. Sequentially attempts delivery through providers ordered by priority (ROUTE_A -> ROUTE_B -> ROUTE_C).
-   * 5. If all routes fail, automatically triggers an idempotent wallet refund.
+   * 1. Accepts single or multiple recipient numbers via `to: string[]` or `recipient: string`.
+   * 2. Validates and normalizes all Nepali mobile numbers (rejects invalid ones clearly).
+   * 3. Calculates SMS segmentation and credit cost (GSM-7 vs Unicode).
+   * 4. Deducts total credits from wallet inside an atomic DB transaction with row-level locking.
+   * 5. Sequentially dispatches to top-priority providers with available balance.
+   * 6. Automatically refunds credits if all routes fail for any recipient.
    */
   async sendSms(
     userId: string,
     dto: SendSmsDto,
     forceOutcome?: { success: boolean; response?: string },
   ): Promise<SendSmsResponse> {
-    // 1. Validate & normalize Nepali phone number (throws BadRequestException if invalid)
-    const normalizedRecipient = normalizeNepaliPhone(dto.recipient);
+    // 1. Extract recipient numbers (supports both `to` array/string and `recipient` alias)
+    const rawRecipients: string[] = [];
+    if (dto.to) {
+      if (Array.isArray(dto.to)) {
+        rawRecipients.push(...dto.to);
+      } else if (typeof dto.to === 'string') {
+        rawRecipients.push(dto.to);
+      }
+    } else if (dto.recipient) {
+      rawRecipients.push(dto.recipient);
+    }
 
-    // 2. Calculate encoding, parts, and cost
+    if (rawRecipients.length === 0) {
+      throw new BadRequestException('At least one recipient phone number is required');
+    }
+
+    // 2. Validate and normalize every recipient number. Rejects invalid ones clearly per brief.
+    const normalizedRecipients: string[] = [];
+    for (const raw of rawRecipients) {
+      const normalized = normalizeNepaliPhone(raw);
+      normalizedRecipients.push(normalized);
+    }
+
+    // 3. Calculate segmentation parts & credit cost
     const segmentResult = calculateSmsSegments(dto.message);
-    const cost = segmentResult.cost;
+    const costPerRecipient = segmentResult.cost;
+    const totalCost = Number((costPerRecipient * normalizedRecipients.length).toFixed(2));
 
-    // 3. Atomically deduct credits from user's wallet with pessimistic row locking
+    // 4. Atomically deduct credits from user's wallet with pessimistic row locking
     // (Throws BadRequestException immediately if balance is insufficient)
     await this.walletService.deductCredits(
       userId,
-      cost,
+      totalCost,
       undefined,
-      `SMS dispatch reservation to ${normalizedRecipient} (${segmentResult.parts} part(s))`,
+      `SMS reservation for ${normalizedRecipients.length} recipient(s) (${segmentResult.parts} part(s) each)`,
     );
 
-    // 4. Create initial PENDING message record
-    const messageRecord = this.smsRepository.create({
-      userId,
-      recipient: normalizedRecipient,
-      message: dto.message,
-      encoding: segmentResult.encoding,
-      parts: segmentResult.parts,
-      cost,
-      status: MessageStatus.PENDING,
-      providerUsed: null,
-      isRefunded: false,
-    });
-    const savedMessage = await this.smsRepository.save(messageRecord);
-
-    // 5. Failover Routing: Traverse active providers in ascending priority order
+    // 5. Fetch active providers ordered by priority
     const activeProviders = await this.providersService.getActiveProviders();
-    const recordedAttempts: ProviderAttempt[] = [];
-    let isDelivered = false;
+    const sentResponses: SendSmsResponse[] = [];
 
-    if (activeProviders.length === 0) {
-      this.logger.error('No active SMS providers configured in system');
-    }
+    for (const recipient of normalizedRecipients) {
+      // Create initial PENDING message record
+      const messageRecord = this.smsRepository.create({
+        userId,
+        recipient,
+        message: dto.message,
+        encoding: segmentResult.encoding,
+        parts: segmentResult.parts,
+        cost: costPerRecipient,
+        status: MessageStatus.PENDING,
+        providerUsed: null,
+        isRefunded: false,
+      });
+      const savedMessage = await this.smsRepository.save(messageRecord);
 
-    for (const provider of activeProviders) {
-      this.logger.log(
-        `Attempting SMS dispatch [Message: ${savedMessage.id}] via ${provider.name} (Priority ${provider.priority})`,
-      );
+      const recordedAttempts: ProviderAttempt[] = [];
+      let isDelivered = false;
 
-      const result = await this.providersService.sendViaProvider(
-        provider,
-        normalizedRecipient,
-        dto.message,
-        forceOutcome,
-      );
+      // Failover Routing: Traverse active providers that have balance
+      for (const provider of activeProviders) {
+        // Skip provider if balance is exhausted ("Send via top-priority provider with balance")
+        if (provider.balance <= 0) {
+          this.logger.warn(
+            `Skipping provider ${provider.name} because its balance is exhausted (${provider.balance})`,
+          );
+          continue;
+        }
 
-      // Record this attempt in the database
-      const attempt = await this.providersService.recordAttempt(
-        savedMessage.id,
-        provider,
-        result.success ? AttemptStatus.SUCCESS : AttemptStatus.FAILED,
-        result.latencyMs,
-        result.response,
-      );
-      recordedAttempts.push(attempt);
-
-      if (result.success) {
-        // Successful transmission! Mark as SENT and stop failover cascade
-        savedMessage.status = MessageStatus.SENT;
-        savedMessage.providerUsed = provider.name;
-        isDelivered = true;
         this.logger.log(
-          `SMS successfully delivered [Message: ${savedMessage.id}] via ${provider.name}`,
+          `Attempting SMS dispatch [Message: ${savedMessage.id}] via ${provider.name} (Priority ${provider.priority}, Balance: ${provider.balance})`,
         );
-        break;
+
+        const result = await this.providersService.sendViaProvider(
+          provider,
+          recipient,
+          dto.message,
+          forceOutcome,
+        );
+
+        // Record attempt audit log
+        const attempt = await this.providersService.recordAttempt(
+          savedMessage.id,
+          provider,
+          result.success ? AttemptStatus.SUCCESS : AttemptStatus.FAILED,
+          result.latencyMs,
+          result.response,
+        );
+        recordedAttempts.push(attempt);
+
+        if (result.success) {
+          savedMessage.status = MessageStatus.SENT;
+          savedMessage.providerUsed = provider.name;
+          isDelivered = true;
+          this.logger.log(
+            `SMS successfully delivered [Message: ${savedMessage.id}] via ${provider.name}`,
+          );
+          break;
+        }
+
+        // On failure, cascade to next priority route
+        this.logger.warn(
+          `Route ${provider.name} failed for message ${savedMessage.id}. Falling over to next route...`,
+        );
       }
 
-      // If failed, loop continues to the next priority provider (failover)
-      this.logger.warn(
-        `Route ${provider.name} failed for message ${savedMessage.id}. Falling over to next route...`,
-      );
+      // Handle Total Failure & Automatic Idempotent Refund
+      if (!isDelivered) {
+        this.logger.error(
+          `All routes failed for message ${savedMessage.id}. Triggering automatic refund...`,
+        );
+        savedMessage.status = MessageStatus.FAILED;
+
+        // Refund the deducted credits back to user's wallet idempotently
+        await this.walletService.refundCredits(
+          userId,
+          costPerRecipient,
+          savedMessage.id,
+          `Automatic refund for failed SMS delivery (Message ID: ${savedMessage.id})`,
+        );
+        savedMessage.isRefunded = true;
+      }
+
+      await this.smsRepository.save(savedMessage);
+
+      sentResponses.push({
+        id: savedMessage.id,
+        recipient: savedMessage.recipient,
+        message: savedMessage.message,
+        encoding: savedMessage.encoding,
+        parts: savedMessage.parts,
+        cost: savedMessage.cost,
+        status: savedMessage.status,
+        providerUsed: savedMessage.providerUsed,
+        isRefunded: savedMessage.isRefunded,
+        createdAt: savedMessage.createdAt,
+        attempts: recordedAttempts.map((att) => ({
+          provider: att.providerName,
+          status: att.status,
+          latencyMs: att.latencyMs,
+          response: att.response,
+        })),
+      });
     }
 
-    // 6. Handle Total Failure & Automatic Idempotent Refund
-    if (!isDelivered) {
-      this.logger.error(
-        `All routes failed for message ${savedMessage.id}. Triggering automatic refund...`,
-      );
-      savedMessage.status = MessageStatus.FAILED;
-
-      // Refund the deducted credits back to user's wallet idempotently
-      await this.walletService.refundCredits(
-        userId,
-        cost,
-        savedMessage.id,
-        `Automatic refund for failed SMS delivery (Message ID: ${savedMessage.id})`,
-      );
-      savedMessage.isRefunded = true;
-    }
-
-    await this.smsRepository.save(savedMessage);
-
+    // Return the response object (enriched with results array when batch)
+    const primary = sentResponses[0];
     return {
-      id: savedMessage.id,
-      recipient: savedMessage.recipient,
-      message: savedMessage.message,
-      encoding: savedMessage.encoding,
-      parts: savedMessage.parts,
-      cost: savedMessage.cost,
-      status: savedMessage.status,
-      providerUsed: savedMessage.providerUsed,
-      isRefunded: savedMessage.isRefunded,
-      createdAt: savedMessage.createdAt,
-      attempts: recordedAttempts.map((att) => ({
-        provider: att.providerName,
-        status: att.status,
-        latencyMs: att.latencyMs,
-        response: att.response,
-      })),
+      ...primary,
+      results: sentResponses,
     };
   }
 
   /**
    * Retrieves paginated SMS delivery history for a user.
+   * Filterable by status, date, and phone number per brief requirements.
    */
   async getSmsLogs(
     userId: string,
@@ -194,8 +234,23 @@ export class SmsService {
     const skip = (page - 1) * limit;
 
     const whereClause: any = { userId };
+
+    // Filter by status (pending, sent, failed)
     if (query.status) {
       whereClause.status = query.status;
+    }
+
+    // Filter by recipient phone number
+    if (query.number) {
+      whereClause.recipient = Like(`%${query.number.trim()}%`);
+    }
+
+    // Filter by date (YYYY-MM-DD)
+    if (query.date) {
+      const dateStr = query.date.trim();
+      const startOfDay = new Date(`${dateStr}T00:00:00.000Z`);
+      const endOfDay = new Date(`${dateStr}T23:59:59.999Z`);
+      whereClause.createdAt = Between(startOfDay, endOfDay);
     }
 
     const [messages, total] = await this.smsRepository.findAndCount({

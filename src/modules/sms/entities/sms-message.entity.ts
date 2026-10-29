@@ -9,8 +9,8 @@ import {
   JoinColumn,
   Index,
 } from 'typeorm';
-import { User } from '../../users/entities/user.entity.js';
-import { ProviderAttempt } from '../../provider-attempts/entities/provider-attempts.entity.js';
+import type { User } from '../../users/entities/user.entity.js';
+import type { ProviderAttempt } from '../../provider-attempts/entities/provider-attempts.entity.js';
 
 export enum SmsEncoding {
   GSM_7 = 'GSM_7',
@@ -32,7 +32,7 @@ export class SmsMessage {
   @Column({ type: 'uuid' })
   userId: string;
 
-  @ManyToOne(() => User, (user) => user.messages, { onDelete: 'CASCADE' })
+  @ManyToOne('User', 'messages', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'userId' })
   user: User;
 
@@ -82,7 +82,7 @@ export class SmsMessage {
   @Column({ type: 'boolean', default: false })
   isRefunded: boolean;
 
-  @OneToMany(() => ProviderAttempt, (attempt: ProviderAttempt) => attempt.message, { cascade: true })
+  @OneToMany('ProviderAttempt', 'message', { cascade: true })
   attempts: ProviderAttempt[];
 
   // Indexed for fast log pagination and date-range filtering

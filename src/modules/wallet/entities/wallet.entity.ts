@@ -10,8 +10,8 @@ import {
   Index,
   Check,
 } from 'typeorm';
-import { User } from '../../users/entities/user.entity.js';
-import { WalletTransaction } from './wallet-transaction.entity.js';
+import type { User } from '../../users/entities/user.entity.js';
+import type { WalletTransaction } from './wallet-transaction.entity.js';
 
 @Entity('wallets')
 @Check('"balance" >= 0')
@@ -23,7 +23,7 @@ export class Wallet {
   @Column({ type: 'uuid' })
   userId: string;
 
-  @OneToOne(() => User, (user) => user.wallet, { onDelete: 'CASCADE' })
+  @OneToOne('User', 'wallet', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'userId' })
   user: User;
 
@@ -40,7 +40,7 @@ export class Wallet {
   })
   balance: number;
 
-  @OneToMany(() => WalletTransaction, (tx) => tx.wallet, { cascade: true })
+  @OneToMany('WalletTransaction', 'wallet', { cascade: true })
   transactions: WalletTransaction[];
 
   @CreateDateColumn()
